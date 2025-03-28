@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart';
 
@@ -33,6 +35,8 @@ class GeolocatorApple extends GeolocatorPlatform {
 
   Stream<Position>? _positionStream;
   Stream<ServiceStatus>? _serviceStatusStream;
+
+  bool _bgHandlerInitialized = false;
 
   @override
   Future<LocationPermission> checkPermission() async {
@@ -246,4 +250,67 @@ class GeolocatorApple extends GeolocatorPlatform {
         return exception;
     }
   }
+
+
+  @override
+  Future<void> startTracking({
+    required BackgroundPositionUpdatesHandler handler,
+    LocationSettings? locationSettings,
+  }) async {
+    if (!_bgHandlerInitialized) {
+      _bgHandlerInitialized = true;
+      final CallbackHandle bgHandle = PluginUtilities.getCallbackHandle(
+        _geolocatorCallbackDispatcher,
+      )!;
+      final CallbackHandle userHandle =
+          PluginUtilities.getCallbackHandle(handler)!;
+      await _methodChannel.invokeMapMethod('Geolocator#startTracking', {
+        'pluginCallbackHandle': bgHandle.toRawHandle(),
+        'userCallbackHandle': userHandle.toRawHandle(),
+        'locationSettings': locationSettings?.toJson(),
+      });
+    }
+  }
+
+  @override
+  Future<void> stopTracking() async {
+    await _methodChannel.invokeMethod('Geolocator#stopTracking');
+  }
+}
+
+@pragma('vm:entry-point')
+void _geolocatorCallbackDispatcher() {
+  // Initialize state necessary for MethodChannels.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  const backgroundChannel =
+      MethodChannel('flutter.baseflow.com/background_geolocator_android');
+
+  // This is where we handle background events from the native portion of the plugin.
+  backgroundChannel.setMethodCallHandler((MethodCall call) async {
+    if (call.method == 'GeolocatorBackground#onLocation') {
+      final CallbackHandle handle =
+          CallbackHandle.fromRawHandle(call.arguments['userCallbackHandle']);
+
+      // PluginUtilities.getCallbackFromHandle performs a lookup based on the
+      // callback handle and returns a tear-off of the original callback.
+      final closure = PluginUtilities.getCallbackFromHandle(handle)!
+          as BackgroundPositionUpdatesHandler;
+
+      try {
+        Map<String, dynamic> positionMap =
+            Map<String, dynamic>.from(call.arguments['position']);
+        final Position position = Position.fromMap(positionMap);
+        await closure(position);
+      } catch (e) {
+        // ignore: avoid_print
+        print(
+            'Geolocator Android: An error occurred in your background handler:');
+        // ignore: avoid_print
+        print(e);
+      }
+    } else {
+      throw UnimplementedError('${call.method} has not been implemented');
+    }
+  });
 }

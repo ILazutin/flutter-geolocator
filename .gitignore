@@ -13,6 +13,7 @@
 bin/
 coverage/
 .fvm/
+.fvmrc
 
 # IntelliJ related
 *.iml
@@ -24,6 +25,7 @@ coverage/
 .classpath
 .project
 **/.settings/
+.editorconfig
 
 # Visual Studio Code related
 .vscode/

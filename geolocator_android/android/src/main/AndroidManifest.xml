@@ -7,5 +7,10 @@
                 android:exported="false"
                 android:foregroundServiceType="location"
                 android:name=".GeolocatorLocationService"/>
+        <service
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="location"
+            android:name=".GeolocatorBackgroundLocationService"/>
     </application>
 </manifest>

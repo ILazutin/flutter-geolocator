@@ -12,6 +12,7 @@ import androidx.annotation.VisibleForTesting;
 import com.baseflow.geolocator.errors.ErrorCodes;
 import com.baseflow.geolocator.errors.PermissionUndefinedException;
 import com.baseflow.geolocator.location.FlutterLocationServiceListener;
+import com.baseflow.geolocator.location.ForegroundNotificationOptions;
 import com.baseflow.geolocator.location.GeolocationManager;
 import com.baseflow.geolocator.location.LocationAccuracyStatus;
 import com.baseflow.geolocator.location.LocationAccuracyManager;
@@ -20,6 +21,7 @@ import com.baseflow.geolocator.location.LocationMapper;
 import com.baseflow.geolocator.location.LocationOptions;
 import com.baseflow.geolocator.permission.LocationPermission;
 import com.baseflow.geolocator.permission.PermissionManager;
+import com.baseflow.geolocator.utils.SharedPrefsUtil;
 import com.baseflow.geolocator.utils.Utils;
 
 import io.flutter.plugin.common.BinaryMessenger;
@@ -45,6 +47,8 @@ class MethodCallHandlerImpl implements MethodChannel.MethodCallHandler {
   @Nullable private Context context;
 
   @Nullable private Activity activity;
+
+  @Nullable private GeolocatorBackgroundLocationService backgroundLocationService;
 
   MethodCallHandlerImpl(
       PermissionManager permissionManager,
@@ -89,6 +93,12 @@ class MethodCallHandlerImpl implements MethodChannel.MethodCallHandler {
       case "openLocationSettings":
         boolean hasOpenedLocationSettings = Utils.openLocationSettings(this.context);
         result.success(hasOpenedLocationSettings);
+        break;
+      case "Geolocator#startTracking":
+        startTracking(this.context, call, result);
+        break;
+      case "Geolocator#stopTracking":
+        stopTracking(this.context, call, result);
         break;
       default:
         result.notImplemented();
@@ -278,5 +288,64 @@ class MethodCallHandlerImpl implements MethodChannel.MethodCallHandler {
     this.pendingCurrentPositionLocationClients.remove(requestId);
 
     result.success(null);
+  }
+
+  private void startTracking(Context context, MethodCall call, MethodChannel.Result result) {
+    Log.d(TAG, "Starting background tracking");
+    try {
+      if (!permissionManager.hasPermission(this.context)) {
+        result.error(
+          ErrorCodes.permissionDenied.toString(),
+          ErrorCodes.permissionDenied.toDescription(),
+          null);
+        return;
+      }
+    } catch (PermissionUndefinedException e) {
+      result.error(
+        ErrorCodes.permissionDefinitionsNotFound.toString(),
+        ErrorCodes.permissionDefinitionsNotFound.toDescription(),
+        null);
+      return;
+    }
+    assert backgroundLocationService != null;
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> arguments = (Map<String, Object>) call.arguments;
+
+    long pluginCallbackHandle = (long) arguments.get("pluginCallbackHandle");
+    long userCallbackHandle = (long) arguments.get("userCallbackHandle");
+
+    SharedPrefsUtil.saveCallbackDispatcherHandleKey(context, pluginCallbackHandle);
+    SharedPrefsUtil.saveCallbackUserDispatcherHandleKey(context, userCallbackHandle);
+
+    Map<String, Object> settings = new HashMap<>();
+    if (arguments.get("locationSettings") != null) {
+      //noinspection unchecked
+      settings = (Map<String, Object>) arguments.get("locationSettings");
+    }
+    LocationOptions locationOptions = LocationOptions.parseArguments(settings);
+    ForegroundNotificationOptions foregroundNotificationOptions = null;
+
+    boolean forceLocationManager = false;
+    if (arguments.get("forceLocationManager") != null) {
+      forceLocationManager = (boolean) arguments.get("forceLocationManager");
+    }
+
+    foregroundNotificationOptions =
+      ForegroundNotificationOptions.parseArguments(
+        (Map<String, Object>) settings.get("foregroundNotificationConfig"));
+    Log.e(TAG, "Geolocator position updates started using Android background service");
+    backgroundLocationService.startLocationService(forceLocationManager, locationOptions);
+    backgroundLocationService.enableBackgroundMode(foregroundNotificationOptions);
+  }
+
+  private void stopTracking(Context context, MethodCall call, MethodChannel.Result result) {
+    assert backgroundLocationService != null;
+    backgroundLocationService.stopLocationService();
+    backgroundLocationService.disableBackgroundMode();
+  }
+
+  public void setBackgroundLocationService(@Nullable GeolocatorBackgroundLocationService service) {
+    this.backgroundLocationService = service;
   }
 }

@@ -27,6 +27,7 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
   private final LocationAccuracyManager locationAccuracyManager;
 
   @Nullable private GeolocatorLocationService foregroundLocationService;
+  @Nullable private GeolocatorBackgroundLocationService backgroundLocationService;
 
   @Nullable private MethodCallHandlerImpl methodCallHandler;
 
@@ -40,6 +41,10 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
           if (service instanceof GeolocatorLocationService.LocalBinder) {
             initialize(((GeolocatorLocationService.LocalBinder) service).getLocationService());
           }
+
+          if (service instanceof GeolocatorBackgroundLocationService.LocalBinder) {
+            initializeBackground(((GeolocatorBackgroundLocationService.LocalBinder) service).getLocationService());
+          }
         }
 
         @Override
@@ -48,6 +53,11 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
           if (foregroundLocationService != null) {
             foregroundLocationService.setActivity(null);
             foregroundLocationService = null;
+          }
+
+          if (backgroundLocationService != null) {
+            backgroundLocationService.setActivity(null);
+            backgroundLocationService = null;
           }
         }
       };
@@ -100,6 +110,9 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
     if (foregroundLocationService != null) {
       foregroundLocationService.setActivity(pluginBinding.getActivity());
     }
+    if (backgroundLocationService != null) {
+      backgroundLocationService.setActivity(pluginBinding.getActivity());
+    }
   }
 
   @Override
@@ -149,11 +162,18 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
         new Intent(context, GeolocatorLocationService.class),
         serviceConnection,
         Context.BIND_AUTO_CREATE);
+    context.bindService(
+      new Intent(context, GeolocatorBackgroundLocationService.class),
+      serviceConnection,
+      Context.BIND_AUTO_CREATE);
   }
 
   private void unbindForegroundService(Context context) {
     if (foregroundLocationService != null) {
       foregroundLocationService.flutterEngineDisconnected();
+    }
+    if (backgroundLocationService != null) {
+      backgroundLocationService.flutterEngineDisconnected();
     }
     context.unbindService(serviceConnection);
   }
@@ -166,6 +186,17 @@ public class GeolocatorPlugin implements FlutterPlugin, ActivityAware {
 
     if (streamHandler != null) {
       streamHandler.setForegroundLocationService(service);
+    }
+  }
+
+  private void initializeBackground(GeolocatorBackgroundLocationService service) {
+    Log.d(TAG, "Initializing Geolocator services");
+    backgroundLocationService = service;
+    backgroundLocationService.setGeolocationManager(geolocationManager);
+    backgroundLocationService.flutterEngineConnected();
+
+    if (methodCallHandler != null) {
+      methodCallHandler.setBackgroundLocationService(service);
     }
   }
 

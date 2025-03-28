@@ -8,6 +8,8 @@ import 'enums/enums.dart';
 import 'implementations/method_channel_geolocator.dart';
 import 'models/models.dart';
 
+typedef BackgroundPositionUpdatesHandler = Future<void> Function(Position position);
+
 /// The interface that implementations of geolocator  must implement.
 ///
 /// Platform implementations should extend this class rather than implement it
@@ -277,5 +279,16 @@ abstract class GeolocatorPlatform extends PlatformInterface {
             cos(endLongitudeRadians - startLongitudeRadians);
 
     return degrees(atan2(y, x));
+  }
+
+  Future<void> startTracking({
+    required BackgroundPositionUpdatesHandler handler,
+    LocationSettings? locationSettings,
+  }) {
+    throw UnimplementedError('getPositionStream() has not been implemented.');
+  }
+
+  Future<void> stopTracking() {
+    throw UnimplementedError('getPositionStream() has not been implemented.');
   }
 }

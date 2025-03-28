@@ -13,7 +13,7 @@ export 'package:geolocator_android/geolocator_android.dart'
         AndroidPosition;
 export 'package:geolocator_apple/geolocator_apple.dart'
     show AppleSettings, ActivityType;
-export 'package:geolocator_web/web_settings.dart' show WebSettings;
+// export 'package:geolocator_web/web_settings.dart' show WebSettings;
 export 'package:geolocator_platform_interface/geolocator_platform_interface.dart';
 
 /// Wraps CLLocationManager (on iOS) and FusedLocationProviderClient or
@@ -277,4 +277,16 @@ class Geolocator {
         endLatitude,
         endLongitude,
       );
+
+  static Future<void> startTracking({
+    required BackgroundPositionUpdatesHandler handler,
+    LocationSettings? locationSettings,
+  }) =>
+      GeolocatorPlatform.instance.startTracking(
+        handler: handler,
+        locationSettings: locationSettings,
+      );
+
+  static Future<void> stopTracking() =>
+      GeolocatorPlatform.instance.stopTracking();
 }
