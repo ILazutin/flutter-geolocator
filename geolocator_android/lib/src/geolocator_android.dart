@@ -325,4 +325,8 @@ void _geolocatorCallbackDispatcher() {
       throw UnimplementedError('${call.method} has not been implemented');
     }
   });
+
+  // Once we've finished initializing, let the native portion of the plugin
+  // know that it can start scheduling alarms.
+  backgroundChannel.invokeMethod<void>('GeolocatorBackground#initialized');
 }
