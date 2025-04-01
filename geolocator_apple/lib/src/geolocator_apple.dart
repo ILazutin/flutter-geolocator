@@ -264,11 +264,14 @@ class GeolocatorApple extends GeolocatorPlatform {
       )!;
       final CallbackHandle userHandle =
           PluginUtilities.getCallbackHandle(handler)!;
-      await _methodChannel.invokeMapMethod('Geolocator#startTracking', {
+      Map<String, dynamic> args = {
         'pluginCallbackHandle': bgHandle.toRawHandle(),
         'userCallbackHandle': userHandle.toRawHandle(),
-        'locationSettings': locationSettings?.toJson(),
-      });
+      };
+      if (locationSettings != null) {
+        args.addAll(locationSettings.toJson());
+      }
+      await _methodChannel.invokeMethod('Geolocator#startTracking', args);
     }
   }
 
@@ -284,7 +287,7 @@ void _geolocatorCallbackDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
 
   const backgroundChannel =
-      MethodChannel('flutter.baseflow.com/background_geolocator_android');
+      MethodChannel('flutter.baseflow.com/background_geolocator_apple');
 
   // This is where we handle background events from the native portion of the plugin.
   backgroundChannel.setMethodCallHandler((MethodCall call) async {
@@ -313,4 +316,8 @@ void _geolocatorCallbackDispatcher() {
       throw UnimplementedError('${call.method} has not been implemented');
     }
   });
+
+  // Once we've finished initializing, let the native portion of the plugin
+  // know that it can start scheduling alarms.
+  backgroundChannel.invokeMethod<void>('GeolocatorBackground#initialized');
 }

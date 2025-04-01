@@ -21,10 +21,21 @@
 @property(strong, nonatomic, nonnull) LocationAccuracyHandler *locationAccuracyHandler;
 
 @property(strong, nonatomic, nonnull) PermissionHandler *permissionHandler;
-  
+
+@property(strong, nonatomic) FlutterMethodChannel *backgroundChannel;
+
+@property(strong, nonatomic) FlutterEngine *headlessRunner;
+
+@property(strong, nonatomic, nonnull) NSUserDefaults *persistentState;
+
+@property(strong, nonatomic, nonnull) NSObject<FlutterPluginRegistrar> *registrar;
+
 @end
 
 @implementation GeolocatorPlugin
+
+static BOOL backgroundIsolateRun = NO;
+static FlutterPluginRegistrantCallback registerPlugins = nil;
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
   FlutterMethodChannel *methodChannel = [FlutterMethodChannel
@@ -39,12 +50,19 @@
   GeolocatorPlugin *instance = [[GeolocatorPlugin alloc] init];
   [registrar addMethodCallDelegate:instance channel:methodChannel];
   
+  instance.registrar = registrar;
+  
   PositionStreamHandler *positionStreamHandler = [[PositionStreamHandler alloc] initWithGeolocationHandler:instance.createGeolocationHandler];
   [positionUpdatesEventChannel setStreamHandler:positionStreamHandler];
   
   LocationServiceStreamHandler *locationServiceStreamHandler = [[LocationServiceStreamHandler alloc] init];
   [locationServiceUpdatesEventChannel setStreamHandler:locationServiceStreamHandler];
   
+  [instance initBackgroundChannel];
+}
+
++ (void)setPluginRegistrantCallback:(FlutterPluginRegistrantCallback)callback {
+  registerPlugins = callback;
 }
 
 - (GeolocationHandler *) createGeolocationHandler {
@@ -52,6 +70,21 @@
     self.geolocationHandler = [[GeolocationHandler alloc] init];
   }
   return self.geolocationHandler;
+}
+
+- (void) initBackgroundChannel {
+  NSLog(@"STARTED INIT LOCATION BACKGROUND CHANNEL");
+
+  self.persistentState = [NSUserDefaults standardUserDefaults];
+
+//  self.headlessRunner = [[FlutterEngine alloc] initWithName:@"GeolocatorIsolate" project:nil allowHeadlessExecution:YES];
+//  
+//  self.backgroundChannel = [FlutterMethodChannel
+//                                            methodChannelWithName:@"flutter.baseflow.com/background_geolocator_apple"
+//                                            binaryMessenger:_headlessRunner];
+//  [[self headlessRunner] addMethodCallDelegate:self channel:_backgroundChannel];
+  
+  NSLog(@"FINISHED INIT LOCATION BACKGROUND CHANNEL");
 }
 
 - (void) setGeolocationHandlerOverride:(GeolocationHandler *)geolocationHandler {
@@ -102,10 +135,149 @@
     [self openSettings:result];
   } else if ([@"openLocationSettings" isEqualToString:call.method]) {
     [self openSettings:result];
+  } else if ([@"Geolocator#startTracking" isEqualToString:call.method]) {
+    [self startTracking:call.arguments
+                 result:result];
+  } else if ([@"Geolocator#stopTracking" isEqualToString:call.method]) {
+    [self stopTracking:result];
+  } else if ([@"GeolocatorBackground#initialized" isEqualToString:call.method]) {
+//    [self sendTrackingData:result];
   } else {
     result(FlutterMethodNotImplemented);
   }
 }
+
+- (void)startTracking:(id _Nullable)arguments
+               result:(FlutterResult)result {
+  NSLog(@"got START TRACKING IN BACKGROUND");
+  __weak typeof(self) weakSelf = self;
+
+  int64_t callbackHandle = [arguments[@"pluginCallbackHandle"] longLongValue];
+  [self setCallbackDispatcherHandle:callbackHandle];
+  
+  int64_t userCallback = [arguments[@"userCallbackHandle"] longLongValue];
+  [self setUserCallbackDispatcherHandle:userCallback];
+  
+  CLLocationAccuracy accuracy = [LocationAccuracyMapper toCLLocationAccuracy:(NSNumber *)arguments[@"accuracy"]];
+  CLLocationDistance distanceFilter = [LocationDistanceMapper toCLLocationDistance:(NSNumber *)arguments[@"distanceFilter"]];
+  NSNumber* pauseLocationUpdatesAutomatically = arguments[@"pauseLocationUpdatesAutomatically"];
+  CLActivityType activityType = [ActivityTypeMapper toCLActivityType:(NSNumber *)arguments[@"activityType"]];
+  NSNumber* allowBackgroundLocationUpdates = arguments[@"allowBackgroundLocationUpdates"];
+
+  NSNumber* showBackgroundLocationIndicator = arguments[@"showBackgroundLocationIndicator"];
+  
+  [[weakSelf geolocationHandler] startListeningWithDesiredAccuracy:accuracy
+                                                    distanceFilter:distanceFilter
+                                 pauseLocationUpdatesAutomatically:pauseLocationUpdatesAutomatically && [pauseLocationUpdatesAutomatically boolValue]
+                                   showBackgroundLocationIndicator:showBackgroundLocationIndicator && [showBackgroundLocationIndicator boolValue]
+                                                      activityType:activityType
+                                    allowBackgroundLocationUpdates:[allowBackgroundLocationUpdates boolValue]
+                                                     resultHandler:^(CLLocation *location) {
+    [weakSelf onLocationDidChange: location];
+  }
+                                                      errorHandler:^(NSString *errorCode, NSString *errorDescription){
+    [weakSelf onLocationFailureWithErrorCode:errorCode
+                            errorDescription:errorDescription];
+  }];
+  result(@(YES));
+}
+
+- (void)stopTracking:(FlutterResult) result {
+  NSLog(@"got STOP TRACKING IN BACKGROUND");
+  [_geolocationHandler stopListening];
+  result(@(YES));
+}
+
+- (void)onLocationDidChange:(CLLocation *_Nullable)location {
+  NSLog(@"LOCATION BACKGROUND UPDATE HANDLED:"
+        "Location description: %@", [location description]);
+
+//  if (!self.backgroundChannel) return;
+  
+  int64_t callbackHandle = [self getCallbackDispatcherHandle];
+  
+  FlutterCallbackInformation *info = [FlutterCallbackCache lookupCallbackInformation:callbackHandle];
+  NSAssert(info != nil, @"failed to find callback");
+  NSString *entrypoint = info.callbackName;
+  NSString *uri = info.callbackLibraryPath;
+  
+  self.headlessRunner = [[FlutterEngine alloc] initWithName:@"GeolocatorIsolate" project:nil allowHeadlessExecution:YES];
+  
+  self.backgroundChannel = [FlutterMethodChannel
+                                            methodChannelWithName:@"flutter.baseflow.com/background_geolocator_apple"
+                            binaryMessenger:[_headlessRunner binaryMessenger]];
+//  _registrar messenger
+  
+  [_headlessRunner runWithEntrypoint:entrypoint libraryURI:uri];
+  
+  if (!backgroundIsolateRun) {
+    registerPlugins(_headlessRunner);
+  }
+  //Надо разделить на 2 метода - подписка на менеджера локаций и старт бэк-сервиса. Старт бэк-сервиса дергать отсюда и из application:didLaunch...
+//  [_registrar addMethodCallDelegate:self channel:_backgroundChannel];
+//  GeneratedPluginRegistrant.register(with: self)
+  [_backgroundChannel setMethodCallHandler:^(FlutterMethodCall* call, FlutterResult result) {
+    if ([@"GeolocatorBackground#initialized" isEqualToString:call.method]) {
+      [self sendTrackingData:location
+                      result:result];
+    }
+    // This method is invoked on the UI thread.
+    // TODO
+  }];
+  
+  NSLog(@"LOCATION BACKGROUND: onLocationDidChange finished");
+//  if (callbackHandle != 0 && _backgroundChannel != nil) {
+//    NSLog(@"LOCATION BACKGROUND UPDATE HANDLED:"
+//          "we are in the callbackHandle condition");
+//
+//    int64_t userCallback = [self getUserCallbackDispatcherHandle];
+//    
+//    NSMutableDictionary *result = [[NSMutableDictionary alloc]initWithCapacity:2];
+//    [result setObject:@(userCallback) forKey: @"userCallbackHandle"];
+//    [result setObject:[LocationMapper toDictionary:location] forKey: @"position"];
+//    [_backgroundChannel
+//         invokeMethod:@"GeolocatorBackground#onLocation"
+//          arguments:result];
+//    }
+  backgroundIsolateRun:YES;
+}
+
+- (void)sendTrackingData:(CLLocation *_Nullable)location
+                  result:(FlutterResult) result {
+  NSLog(@"LOCATION BACKGROUND UPDATE HANDLED:"
+        "we are in the sendTrackingData handler");
+  
+  int64_t userCallback = [self getUserCallbackDispatcherHandle];
+  
+  NSMutableDictionary *response = [[NSMutableDictionary alloc]initWithCapacity:2];
+  [response setObject:@(userCallback) forKey: @"userCallbackHandle"];
+//  CLLocation *location = [[self geolocationHandler] getLastKnownPosition];
+  [response setObject:[LocationMapper toDictionary:location] forKey: @"position"];
+  [_backgroundChannel
+   invokeMethod:@"GeolocatorBackground#onLocation"
+   arguments:response];
+  result(@(YES));
+}
+
+- (void)onLocationFailureWithErrorCode:(NSString *_Nonnull)errorCode
+                      errorDescription:(NSString *_Nonnull)errorDescription {
+  NSLog(@"LOCATION BACKGROUND UPDATE FAILURE:"
+        "Error reason: %@"
+        "Error description: %@", errorCode, errorDescription);
+}
+
+//- (BOOL)application:(UIApplication *)application
+//    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+//  // Check to see if we're being launched due to a location event.
+//  if (launchOptions[UIApplicationLaunchOptionsLocationKey] != nil) {
+//    // Restart the headless service.
+////    [self startGeofencingService:[self getCallbackDispatcherHandle]];
+//  }
+//
+//  // Note: if we return NO, this vetos the launch of the application.
+//  return YES;
+//}
+
 
 - (void)onCheckPermission:(FlutterResult) result {
   CLAuthorizationStatus status = [[self createPermissionHandler] checkPermission];
@@ -183,4 +355,31 @@
   }];
 #endif
 }
+
+- (int64_t)getCallbackDispatcherHandle {
+  id handle = [_persistentState objectForKey:@"callback_dispatcher_handle"];
+  if (handle == nil) {
+    return 0;
+  }
+  return [handle longLongValue];
+}
+
+- (void)setCallbackDispatcherHandle:(int64_t)handle {
+  [_persistentState setObject:[NSNumber numberWithLongLong:handle]
+                       forKey:@"callback_dispatcher_handle"];
+}
+
+- (int64_t)getUserCallbackDispatcherHandle {
+  id handle = [_persistentState objectForKey:@"user_callback_handle"];
+  if (handle == nil) {
+    return 0;
+  }
+  return [handle longLongValue];
+}
+
+- (void)setUserCallbackDispatcherHandle:(int64_t)handle {
+  [_persistentState setObject:[NSNumber numberWithLongLong:handle]
+                       forKey:@"user_callback_handle"];
+}
+
 @end

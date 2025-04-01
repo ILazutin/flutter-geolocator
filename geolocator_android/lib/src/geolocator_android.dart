@@ -276,7 +276,7 @@ class GeolocatorAndroid extends GeolocatorPlatform {
       )!;
       final CallbackHandle userHandle =
           PluginUtilities.getCallbackHandle(handler)!;
-      await _methodChannel.invokeMapMethod('Geolocator#startTracking', {
+      await _methodChannel.invokeMethod('Geolocator#startTracking', {
         'pluginCallbackHandle': bgHandle.toRawHandle(),
         'userCallbackHandle': userHandle.toRawHandle(),
         'locationSettings': locationSettings?.toJson(),
